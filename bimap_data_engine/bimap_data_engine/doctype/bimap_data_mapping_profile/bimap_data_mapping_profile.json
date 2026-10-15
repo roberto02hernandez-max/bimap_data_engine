@@ -1,0 +1,29 @@
+{
+ "actions": [],
+ "allow_rename": 0,
+ "creation": "2026-10-13 00:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": ["profile_title","target_doctype","table_field","source_format","mapping_json","defaults_json","is_shared"],
+ "fields": [
+  {"fieldname":"profile_title","fieldtype":"Data","in_list_view":1,"label":"Profile Title","reqd":1},
+  {"fieldname":"target_doctype","fieldtype":"Link","in_list_view":1,"label":"Target DocType","options":"DocType","reqd":1,"search_index":1},
+  {"fieldname":"table_field","fieldtype":"Data","label":"Table Field"},
+  {"fieldname":"source_format","fieldtype":"Select","label":"Source Format","options":"Any\nCSV\nXLSX","reqd":1},
+  {"fieldname":"mapping_json","fieldtype":"Code","label":"Mapping JSON","options":"JSON","reqd":1},
+  {"default":"{}","fieldname":"defaults_json","fieldtype":"Code","label":"Defaults JSON","options":"JSON"},
+  {"default":"0","fieldname":"is_shared","fieldtype":"Check","in_list_view":1,"label":"Shared"}
+ ],
+ "index_web_pages_for_search": 0,
+ "links": [],
+ "modified": "2026-10-13 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Bimap Data Engine",
+ "name": "BIMAP Data Mapping Profile",
+ "naming_rule": "Random",
+ "owner": "Administrator",
+ "permissions": [{"create":1,"delete":1,"export":1,"read":1,"report":1,"role":"System Manager","write":1}],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}

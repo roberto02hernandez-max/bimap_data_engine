@@ -1,0 +1,14 @@
+{
+ "content": null,
+ "docstatus": 0,
+ "doctype": "Page",
+ "module": "Bimap Data Engine",
+ "name": "bimap-alphaerp-migration",
+ "page_name": "bimap-alphaerp-migration",
+ "roles": [
+  {"role": "System Manager"}
+ ],
+ "standard": "Yes",
+ "system_page": 0,
+ "title": "Migración AlphaERP"
+}

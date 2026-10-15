@@ -1,5 +1,5 @@
 app_name = "bimap_data_engine"
-app_title = "Bimap Data Engine"
+app_title = "BIMAP Data Engine"
 app_publisher = "BIMAP"
 app_description = "Motor universal de importación y edición masiva para BIMAP"
 app_email = "dev@bimap.local"
@@ -8,7 +8,13 @@ app_license = "mit"
 # Apps
 # ------------------
 
-# required_apps = []
+required_apps = ["erpnext"]
+
+# Los dominios pueden registrar adaptadores sin añadir ramas al núcleo.
+bimap_data_engine_adapters = []
+bimap_data_engine_change_policies = []
+bimap_data_engine_import_policies = []
+bimap_data_engine_import_adapters = {}
 
 # Each item in the list will be shown as an app in the apps page
 # add_to_apps_screen = [
@@ -26,7 +32,10 @@ app_license = "mit"
 
 # include js, css files in header of desk.html
 # app_include_css = "/assets/bimap_data_engine/css/bimap_data_engine.css"
-# app_include_js = "/assets/bimap_data_engine/js/bimap_data_engine.js"
+app_include_js = [
+	"/assets/bimap_data_engine/js/integration.js",
+	"/assets/bimap_data_engine/js/line_import.js",
+]
 
 # include js, css files in header of web template
 # web_include_css = "/assets/bimap_data_engine/css/bimap_data_engine.css"
@@ -83,7 +92,8 @@ app_license = "mit"
 # ------------
 
 # before_install = "bimap_data_engine.install.before_install"
-# after_install = "bimap_data_engine.install.after_install"
+after_install = "bimap_data_engine.install.after_install"
+after_migrate = "bimap_data_engine.install.after_migrate"
 
 # Uninstallation
 # ------------

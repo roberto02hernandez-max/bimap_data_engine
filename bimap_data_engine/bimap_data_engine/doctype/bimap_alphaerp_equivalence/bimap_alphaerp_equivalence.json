@@ -1,0 +1,35 @@
+{
+ "actions": [],
+ "allow_rename": 0,
+ "autoname": "hash",
+ "creation": "2026-10-14 00:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": ["source_system", "source_fingerprint", "mapping_type", "source_key", "source_label", "resolution", "target_doctype", "target_name", "settings_json", "mapping_key"],
+ "fields": [
+  {"default":"AlphaERP","fieldname":"source_system","fieldtype":"Data","label":"Source System","read_only":1,"reqd":1},
+  {"fieldname":"source_fingerprint","fieldtype":"Data","label":"Source Fingerprint","read_only":1},
+  {"fieldname":"mapping_type","fieldtype":"Select","in_list_view":1,"label":"Mapping Type","options":"UOM\nCustomer Tax\nSupplier Tax\nCustomer Commercial\nSupplier Commercial\nItem Group\nSource Issue","read_only":1,"reqd":1},
+  {"fieldname":"source_key","fieldtype":"Data","in_list_view":1,"label":"Source Key","read_only":1,"reqd":1},
+  {"fieldname":"source_label","fieldtype":"Data","label":"Source Label","read_only":1},
+  {"fieldname":"resolution","fieldtype":"Select","in_list_view":1,"label":"Resolution","options":"Reuse\nCreate\nIgnore\nPackaging\nVariant","reqd":1},
+  {"fieldname":"target_doctype","fieldtype":"Link","label":"Target DocType","options":"DocType","read_only":1},
+  {"fieldname":"target_name","fieldtype":"Dynamic Link","in_list_view":1,"label":"Target","options":"target_doctype"},
+  {"fieldname":"settings_json","fieldtype":"Code","label":"Settings JSON","options":"JSON"},
+  {"fieldname":"mapping_key","fieldtype":"Data","hidden":1,"label":"Mapping Key","read_only":1,"unique":1}
+ ],
+ "index_web_pages_for_search": 0,
+ "links": [],
+ "modified": "2026-10-14 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Bimap Data Engine",
+ "name": "BIMAP AlphaERP Equivalence",
+ "naming_rule": "Set by user",
+ "owner": "Administrator",
+ "permissions": [
+  {"create":1,"delete":1,"export":1,"read":1,"report":1,"role":"System Manager","write":1}
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}

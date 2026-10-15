@@ -1,0 +1,31 @@
+{
+ "actions": [],
+ "allow_rename": 0,
+ "creation": "2026-10-13 00:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": ["session_title","mode","target_doctype","status","source_file","mapping_profile","row_count","last_opened_on","state_json"],
+ "fields": [
+  {"fieldname":"session_title","fieldtype":"Data","in_list_view":1,"label":"Session Title","reqd":1},
+  {"fieldname":"mode","fieldtype":"Select","in_list_view":1,"label":"Mode","options":"Edit\nImport","reqd":1},
+  {"fieldname":"target_doctype","fieldtype":"Link","in_list_view":1,"label":"Target DocType","options":"DocType","reqd":1,"search_index":1},
+  {"fieldname":"status","fieldtype":"Select","in_list_view":1,"label":"Status","options":"Draft\nPrepared\nApplied\nArchived","reqd":1},
+  {"fieldname":"source_file","fieldtype":"Attach","label":"Source File"},
+  {"fieldname":"mapping_profile","fieldtype":"Link","label":"Mapping Profile","options":"BIMAP Data Mapping Profile"},
+  {"default":"0","fieldname":"row_count","fieldtype":"Int","label":"Row Count","read_only":1},
+  {"fieldname":"last_opened_on","fieldtype":"Datetime","label":"Last Opened On","read_only":1},
+  {"fieldname":"state_json","fieldtype":"Long Text","label":"State JSON","read_only":1,"reqd":1}
+ ],
+ "index_web_pages_for_search": 0,
+ "links": [],
+ "modified": "2026-10-13 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Bimap Data Engine",
+ "name": "BIMAP Data Session",
+ "naming_rule": "Random",
+ "owner": "Administrator",
+ "permissions": [{"create":1,"delete":1,"export":1,"read":1,"report":1,"role":"System Manager","write":1}],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}

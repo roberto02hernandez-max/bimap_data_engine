@@ -1,0 +1,1 @@
+"""AlphaERP equivalence DocType."""

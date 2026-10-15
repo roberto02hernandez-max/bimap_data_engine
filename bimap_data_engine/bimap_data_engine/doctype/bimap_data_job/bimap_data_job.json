@@ -1,0 +1,40 @@
+{
+ "actions": [],
+ "allow_rename": 0,
+ "creation": "2026-10-13 00:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "status", "job_type", "requested_by", "operation_id", "batch_size", "total_documents",
+  "processed_documents", "succeeded_documents", "failed_documents",
+  "cancel_requested", "started_at", "finished_at", "request_json", "last_error"
+ ],
+ "fields": [
+  {"fieldname":"status","fieldtype":"Select","in_list_view":1,"label":"Status","options":"Draft\nQueued\nRunning\nCompleted\nCompleted with errors\nCancelled\nFailed","read_only":1,"reqd":1},
+  {"default":"Edit","fieldname":"job_type","fieldtype":"Select","in_list_view":1,"label":"Job Type","options":"Edit\nImport\nPreview","read_only":1,"reqd":1},
+  {"fieldname":"requested_by","fieldtype":"Link","in_list_view":1,"label":"Requested By","options":"User","read_only":1,"reqd":1},
+  {"fieldname":"operation_id","fieldtype":"Data","label":"Operation ID","read_only":1,"reqd":1,"search_index":1,"unique":1},
+  {"fieldname":"batch_size","fieldtype":"Int","label":"Batch Size","read_only":1,"reqd":1},
+  {"fieldname":"total_documents","fieldtype":"Int","in_list_view":1,"label":"Total Documents","read_only":1},
+  {"fieldname":"processed_documents","fieldtype":"Int","label":"Processed Documents","read_only":1},
+  {"fieldname":"succeeded_documents","fieldtype":"Int","label":"Succeeded Documents","read_only":1},
+  {"fieldname":"failed_documents","fieldtype":"Int","label":"Failed Documents","read_only":1},
+  {"default":"0","fieldname":"cancel_requested","fieldtype":"Check","label":"Cancel Requested","read_only":1},
+  {"fieldname":"started_at","fieldtype":"Datetime","label":"Started At","read_only":1},
+  {"fieldname":"finished_at","fieldtype":"Datetime","label":"Finished At","read_only":1},
+  {"fieldname":"request_json","fieldtype":"Long Text","label":"Request JSON","read_only":1},
+  {"fieldname":"last_error","fieldtype":"Long Text","label":"Last Error","read_only":1}
+ ],
+ "index_web_pages_for_search": 0,
+ "links": [],
+ "modified": "2026-10-13 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Bimap Data Engine",
+ "name": "BIMAP Data Job",
+ "naming_rule": "Random",
+ "owner": "Administrator",
+ "permissions": [{"create":1,"delete":1,"export":1,"read":1,"report":1,"role":"System Manager","write":1}],
+ "sort_field": "creation",
+ "sort_order": "DESC",
+ "states": []
+}
