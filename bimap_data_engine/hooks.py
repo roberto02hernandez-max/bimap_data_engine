@@ -147,13 +147,13 @@ after_migrate = "bimap_data_engine.install.after_migrate"
 # ---------------
 # Hook on document methods and events
 
-# doc_events = {
-# 	"*": {
-# 		"on_update": "method",
-# 		"on_cancel": "method",
-# 		"on_trash": "method"
-# 	}
-# }
+doc_events = {
+	name: {"validate": "bimap_data_engine.services.alphaerp.restrictions.validate_product_type_restrictions"}
+	for name in (
+		"Quotation", "Sales Order", "Delivery Note", "Sales Invoice", "POS Invoice",
+		"Purchase Order", "Purchase Receipt", "Purchase Invoice", "Stock Entry", "Stock Reconciliation",
+	)
+}
 
 # Scheduled Tasks
 # ---------------

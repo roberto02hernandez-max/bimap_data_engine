@@ -17,6 +17,8 @@ from frappe.custom.doctype.custom_field.custom_field import create_custom_fields
 from frappe.utils import cint, flt, now_datetime, validate_email_address
 
 from bimap_data_engine.services.alphaerp.normalize import normalize_package
+from bimap_data_engine.services.alphaerp.package import AlphaERPPackage
+from bimap_data_engine.services.alphaerp.trial import key as source_key
 
 
 BATCH_SIZE = 100
@@ -41,6 +43,17 @@ TRACE_FIELDS = {
 		{"fieldname": "bimap_alphaerp_attributes", "label": "Atributos AlphaERP", "fieldtype": "Long Text", "insert_after": "bimap_alphaerp_variant_code", "read_only": 1},
 		{"fieldname": "bimap_alphaerp_tax_config", "label": "Configuración fiscal AlphaERP", "fieldtype": "Long Text", "insert_after": "bimap_alphaerp_attributes", "read_only": 1},
 		{"fieldname": "bimap_alphaerp_sat_product_code", "label": "Clave SAT AlphaERP", "fieldtype": "Data", "insert_after": "bimap_alphaerp_tax_config", "read_only": 1, "search_index": 1},
+		{"fieldname": "bimap_alphaerp_item_kind", "label": "Clase AlphaERP", "fieldtype": "Select", "options": "Producto\nServicio\nKit", "insert_after": "bimap_alphaerp_sat_product_code", "read_only": 1, "search_index": 1},
+		{"fieldname": "bimap_product_type", "label": "Tipo de producto", "fieldtype": "Link", "options": "BIMAP Product Type", "insert_after": "bimap_alphaerp_item_kind", "search_index": 1},
+	],
+	"Warehouse": [
+		{"fieldname": "bimap_alphaerp_warehouse_code", "label": "Almacén AlphaERP", "fieldtype": "Data", "insert_after": "warehouse_name", "read_only": 1, "unique": 1, "search_index": 1},
+	],
+	"Item Attribute": [
+		{"fieldname": "bimap_alphaerp_attribute_list", "label": "Lista AlphaERP", "fieldtype": "Data", "insert_after": "attribute_name", "read_only": 1, "unique": 1, "search_index": 1},
+	],
+	"Batch": [
+		{"fieldname": "bimap_alphaerp_batch_key", "label": "Lote AlphaERP", "fieldtype": "Data", "insert_after": "batch_id", "read_only": 1, "unique": 1, "search_index": 1},
 	],
 	"Price List": [
 		{"fieldname": "bimap_alphaerp_price_list", "label": "Lista AlphaERP", "fieldtype": "Data", "insert_after": "price_list_name", "read_only": 1, "unique": 1, "search_index": 1},
@@ -109,21 +122,25 @@ class AlphaERPCatalogExecutor:
 		self.company = company or frappe.defaults.get_global_default("company")
 		self.commit = commit
 		self.workbook = normalize_package(source_directory)
+		self.package = AlphaERPPackage(source_directory)
 		self.stats = Counter()
 		self.errors = []
-		self.maps = {"sales_persons": {}, "customers": {}, "suppliers": {}, "items": {}, "variants": {}, "price_lists": {}, "currencies": {}}
+		self.maps = {"sales_persons": {}, "customers": {}, "suppliers": {}, "items": {}, "variants": {}, "price_lists": {}, "currencies": {}, "attributes": {}}
 		self.company_currency = frappe.get_cached_value("Company", self.company, "default_currency") or "MXN"
 		self.abbr = frappe.get_cached_value("Company", self.company, "abbr")
 
 	def run(self):
 		started = now_datetime()
 		self._step("custom_fields", self._prepare_custom_fields)
+		self._step("product_types", self._import_product_types)
 		self._step("currencies", self._import_currencies)
 		self._step("uoms", self._import_uoms)
 		self._step("price_lists", self._import_price_lists)
 		self._step("taxes", self._prepare_taxes)
 		self._step("party_groups", self._prepare_party_groups)
 		self._step("item_groups", self._prepare_item_groups)
+		self._step("brands", self._prepare_brands)
+		self._step("item_attributes", self._import_item_attributes)
 		self._step("sales_persons", self._import_sales_persons)
 		self._step("customers", self._import_customers)
 		self._step("suppliers", self._import_suppliers)
@@ -186,6 +203,30 @@ class AlphaERPCatalogExecutor:
 		create_custom_fields(TRACE_FIELDS, update=True)
 		frappe.clear_cache()
 
+	def _import_product_types(self):
+		for row in self.package.rows("TIPOALMA"):
+			key = source_key(row.get("CVE_TIAL"))
+			if not key:
+				continue
+			doc = frappe.get_doc("BIMAP Product Type", key) if frappe.db.exists("BIMAP Product Type", key) else frappe.new_doc("BIMAP Product Type")
+			doc.update({
+				"type_code": key,
+				"description": _text(row.get("DES_TIAL")) or key,
+				"allow_purchase": cint(row.get("CHK_COMPRA")),
+				"allow_stock": cint(row.get("CHK_ALMACE")),
+				"allow_sales": cint(row.get("CHK_VENTAS")),
+				"allow_formulas": cint(row.get("CHK_FORMUL")),
+				"show_in_catalog": cint(row.get("CHK_CATAP")),
+				"uses_attributes": cint(row.get("CHK_ATRIB")),
+				"web_sale": cint(row.get("VTAXWWW")),
+				"anonymous_sale": cint(row.get("VTAANONIMA")),
+				"show_in_forms": cint(row.get("VISUALFORM")),
+				"image_path": _text(row.get("IMGNAVGC")),
+				"display_order": cint(row.get("ORDENC")),
+				"use_image": cint(row.get("USARIMGC")),
+			})
+			self._save(doc, "product_type", key)
+
 	def _import_currencies(self):
 		for row in _rows(self.workbook, "Monedas"):
 			iso = _text(row.get("Moneda ISO"))
@@ -203,8 +244,16 @@ class AlphaERPCatalogExecutor:
 				self._save(frappe.get_doc({"doctype": "UOM", "uom_name": name, "must_be_whole_number": 0}), "uom", name)
 
 	def _import_price_lists(self):
+		priced_lists = {
+			_text(row.get("Lista de precios AlphaERP"))
+			for row in _rows(self.workbook, "Precios")
+			if row.get("Origen") != "Especial cliente" and flt(row.get("Precio"))
+		}
 		for row in _rows(self.workbook, "Listas de precios"):
 			key = _text(row.get("Lista de precios AlphaERP"))
+			if key not in priced_lists:
+				self.stats["empty_price_list_omitted"] += 1
+				continue
 			label = _text(row.get("Nombre")) or f"Lista {key}"
 			name = frappe.db.get_value("Price List", {"bimap_alphaerp_price_list": key}, "name") or frappe.db.get_value("Price List", {"price_list_name": label}, "name")
 			doc = frappe.get_doc("Price List", name) if name else frappe.new_doc("Price List")
@@ -230,7 +279,8 @@ class AlphaERPCatalogExecutor:
 		for row in _rows(self.workbook, "Perfiles fiscales"):
 			party = row["Tipo de tercero"]
 			key = _text(row["Clave fiscal AlphaERP"])
-			name = _tax_name(row)
+			description = _text(row.get("Descripción")) or _tax_name(row)
+			name = f"AlphaERP {party} {key} - {description}"[:140]
 			category = frappe.db.get_value("Tax Category", {"title": name}, "name")
 			if not category:
 				doc = frappe.get_doc({"doctype": "Tax Category", "title": name, "disabled": 0})
@@ -238,7 +288,7 @@ class AlphaERPCatalogExecutor:
 				category = doc.name
 			self.tax_categories[(party, key)] = category
 			doctype = "Sales Taxes and Charges Template" if party == "Cliente" else "Purchase Taxes and Charges Template"
-			template_name = f"{name} - {'Ventas' if party == 'Cliente' else 'Compras'}"
+			template_name = f"{name} - {'Ventas' if party == 'Cliente' else 'Compras'}"[:140]
 			if frappe.db.exists(doctype, {"title": template_name, "company": self.company}):
 				continue
 			taxes = []
@@ -267,29 +317,78 @@ class AlphaERPCatalogExecutor:
 
 	def _prepare_item_groups(self):
 		self.item_groups = {}
-		for row in _rows(self.workbook, "Productos"):
-			path = _text(row.get("Ruta grupo de artículos"))
-			if path in self.item_groups:
-				continue
-			parent = "All Item Groups"
-			parts = [part.strip() for part in path.split("/") if part.strip()] or ["Products"]
-			for index, part in enumerate(parts):
-				is_last = index == len(parts) - 1
-				name = part
-				if frappe.db.exists("Item Group", name):
-					existing_parent = frappe.db.get_value("Item Group", name, "parent_item_group")
-					if existing_parent != parent and name != "Products":
-						name = f"{part} / {parent}"[:140]
-				if not frappe.db.exists("Item Group", name):
-					doc = frappe.get_doc({"doctype": "Item Group", "item_group_name": name, "parent_item_group": parent, "is_group": 0 if is_last else 1})
-					self._save(doc, "item_group", path)
-				elif not is_last and not cint(frappe.db.get_value("Item Group", name, "is_group")):
-					# Existing leaves cannot receive children. Keep the remaining path flattened.
-					name = (" / ".join(parts[: index + 1]))[:140]
-					if not frappe.db.exists("Item Group", name):
-						self._save(frappe.get_doc({"doctype": "Item Group", "item_group_name": name, "parent_item_group": "All Item Groups", "is_group": 1}), "item_group", path)
-				parent = name
-			self.item_groups[path] = parent
+		classes = {source_key(r.get("CSE_PROD")): _text(r.get("DES_CSE")) for r in self.package.rows("CLASES")}
+		subclasses = {
+			(source_key(r.get("CSE_PROD")), source_key(r.get("SUB_CSE"))): (_text(r.get("DES_SUB")) or f"[SIN DESCRIPCIÓN: {source_key(r.get('SUB_CSE'))}]")
+			for r in self.package.rows("SUBCLASE")
+		}
+		third_levels = {
+			(source_key(r.get("CSE_PROD")), source_key(r.get("SUB_CSE")), source_key(r.get("SUB_SUBCSE"))): (_text(r.get("DESSUBSUB")) or f"[SIN DESCRIPCIÓN: {source_key(r.get('SUB_SUBCSE'))}]")
+			for r in self.package.rows("SUB2CLAS")
+		}
+		paths = []
+		for class_key, label in classes.items():
+			if label:
+				paths.append(((class_key,), (label,)))
+		for (class_key, sub_key), label in subclasses.items():
+			if classes.get(class_key) and label:
+				paths.append(((class_key, sub_key), (classes[class_key], label)))
+		for (class_key, sub_key, third_key), label in third_levels.items():
+			if classes.get(class_key) and subclasses.get((class_key, sub_key)) and label:
+				paths.append(((class_key, sub_key, third_key), (classes[class_key], subclasses[(class_key, sub_key)], label)))
+
+		created_paths = {}
+		for codes, labels in sorted(paths, key=lambda entry: (len(entry[0]), entry[0])):
+			parent = "All Item Groups" if len(codes) == 1 else created_paths[codes[:-1]]
+			label = labels[-1]
+			name = label
+			if frappe.db.exists("Item Group", name) and frappe.db.get_value("Item Group", name, "parent_item_group") != parent:
+				name = f"{label} [{'/'.join(codes)}]"[:140]
+			is_group = len(codes) < 3
+			if not frappe.db.exists("Item Group", name):
+				self._save(frappe.get_doc({"doctype": "Item Group", "item_group_name": name, "parent_item_group": parent, "is_group": cint(is_group)}), "item_group", "/".join(codes))
+			created_paths[codes] = name
+			self.item_groups[" / ".join(labels)] = name
+		self.item_groups.setdefault("", "Products")
+
+	def _prepare_brands(self):
+		parents = defaultdict(set)
+		for row in self.package.rows("SUB2CLAS"):
+			label = _text(row.get("DESSUBSUB"))
+			if label:
+				parents[label].add((source_key(row.get("CSE_PROD")), source_key(row.get("SUB_CSE"))))
+		self.brand_names = {label for label, paths in parents.items() if len(paths) > 1}
+		for name in sorted(self.brand_names):
+			if not frappe.db.exists("Brand", name):
+				self._save(frappe.get_doc({"doctype": "Brand", "brand": name}), "brand", name)
+
+	def _import_item_attributes(self):
+		"""Create one native ERPNext attribute for every AlphaERP LISTA_MED."""
+		grouped = defaultdict(list)
+		for row in _rows(self.workbook, "Valores de atributos"):
+			list_key = _text(row.get("Lista de atributos AlphaERP"))
+			variant_key = _text(row.get("Valor"))
+			value = _text(row.get("Descripción")) or variant_key
+			if list_key and variant_key:
+				grouped[list_key].append((variant_key, value, cint(row.get("Orden"))))
+		for list_key, values in grouped.items():
+			name = frappe.db.get_value("Item Attribute", {"bimap_alphaerp_attribute_list": list_key}, "name")
+			if not name:
+				name = list_key
+			doc = frappe.get_doc("Item Attribute", name) if frappe.db.exists("Item Attribute", name) else frappe.new_doc("Item Attribute")
+			doc.update({"attribute_name": list_key, "bimap_alphaerp_attribute_list": list_key, "numeric_values": 0})
+			doc.set("item_attribute_values", [])
+			used = set()
+			for variant_key, value, order in sorted(values, key=lambda entry: (entry[2], entry[0])):
+				# ERPNext requires values to be unique inside an attribute.  When two
+				# source codes share a label, retain the source code in the visible value.
+				visible = value if value not in used else f"{value} [{variant_key}]"
+				used.add(visible)
+				doc.append("item_attribute_values", {"attribute_value": visible, "abbr": variant_key[:30]})
+				self.maps["attributes"][(list_key, variant_key)] = visible
+			doc = self._save(doc, "item_attribute", list_key)
+			if doc:
+				self.maps["attributes"][(list_key, "__name__")] = doc.name
 
 	def _import_customers(self):
 		for row in _rows(self.workbook, "Clientes"):
@@ -361,10 +460,22 @@ class AlphaERPCatalogExecutor:
 		return json.dumps({key: row.get(key) for key in ("Modo IVA", "Tasa IVA producto", "No objeto de impuesto", "Maneja IEPS", "Tipo IEPS", "Porcentaje IEPS", "Unidad IEPS", "Monto IEPS", "Excluir IEPS de base IVA", "IVA IMMEX", "Modo retención IVA", "Tasa retención IVA producto", "Modo retención ISR", "Tasa retención ISR producto")}, ensure_ascii=False, default=str)
 
 	def _import_items(self):
+		variant_lists = {
+			_text(row.get("Clave producto AlphaERP")): _text(row.get("Lista de atributos"))
+			for row in _rows(self.workbook, "Variantes")
+			if _text(row.get("Clave producto AlphaERP"))
+		}
 		for row in _rows(self.workbook, "Productos"):
 			key = _text(row["Clave AlphaERP"])
+			kind = _text(row.get("Clase de artículo")) or "Producto"
+			attribute_list = variant_lists.get(key) or _text(row.get("Lista de atributos"))
+			has_variants = bool(attribute_list)
 			doc = frappe.get_doc("Item", key) if frappe.db.exists("Item", key) else frappe.new_doc("Item")
-			doc.update({"item_code": key, "item_name": _text(row.get("Nombre")) or key, "description": _text(row.get("Descripción")) or _text(row.get("Nombre")) or key, "item_group": self.item_groups.get(_text(row.get("Ruta grupo de artículos")), "Products"), "stock_uom": _text(row.get("Unidad AlphaERP")) or "Nos.", "is_stock_item": 1, "has_batch_no": cint(row.get("Maneja lotes")), "shelf_life_in_days": cint(row.get("Vida útil días")), "disabled": 0, "bimap_alphaerp_base_item": key, "bimap_alphaerp_variant_code": "", "bimap_alphaerp_attributes": "", "bimap_alphaerp_tax_config": self._tax_json(row), "bimap_alphaerp_sat_product_code": _text(row.get("Clave producto SAT"))})
+			doc.update({"item_code": key, "item_name": _text(row.get("Nombre")) or key, "description": _text(row.get("Descripción")) or _text(row.get("Nombre")) or key, "item_group": self.item_groups.get(_text(row.get("Ruta grupo de artículos")), "Products"), "brand": _text(row.get("Nombre tercer nivel")) if _text(row.get("Nombre tercer nivel")) in self.brand_names else None, "stock_uom": _text(row.get("Unidad AlphaERP")) or "Nos.", "is_stock_item": 0 if kind in {"Servicio", "Kit"} else 1, "has_variants": cint(has_variants), "variant_based_on": "Item Attribute", "has_batch_no": cint(row.get("Maneja lotes")) if kind == "Producto" else 0, "shelf_life_in_days": cint(row.get("Vida útil días")), "disabled": 0, "bimap_alphaerp_base_item": key, "bimap_alphaerp_variant_code": "", "bimap_alphaerp_attributes": "", "bimap_alphaerp_tax_config": self._tax_json(row), "bimap_alphaerp_sat_product_code": _text(row.get("Clave producto SAT")), "bimap_alphaerp_item_kind": kind, "bimap_product_type": _text(row.get("Tipo de producto AlphaERP")) or None})
+			doc.set("attributes", [])
+			attribute_name = self.maps["attributes"].get((attribute_list, "__name__"))
+			if has_variants and attribute_name:
+				doc.append("attributes", {"attribute": attribute_name})
 			barcode = _text(row.get("Código de barras"))
 			if barcode and not frappe.db.exists("Item Barcode", {"barcode": barcode}) and not any(child.barcode == barcode for child in doc.barcodes):
 				doc.append("barcodes", {"barcode": barcode, "uom": doc.stock_uom})
@@ -385,9 +496,26 @@ class AlphaERPCatalogExecutor:
 				continue
 			code = self._variant_item_code(base, variant)
 			base_row = base_rows[base]
-			doc = frappe.get_doc("Item", code) if frappe.db.exists("Item", code) else frappe.new_doc("Item")
-			attrs = {f"Atributo {i}": row.get(f"Atributo {i}") for i in range(1, 13) if _text(row.get(f"Atributo {i}"))}
-			doc.update({"item_code": code, "item_name": f"{_text(base_row.get('Nombre')) or base} - {variant}", "description": _text(base_row.get("Descripción")) or _text(base_row.get("Nombre")) or base, "item_group": self.item_groups.get(_text(base_row.get("Ruta grupo de artículos")), "Products"), "stock_uom": _text(base_row.get("Unidad AlphaERP")) or "Nos.", "is_stock_item": 1, "has_batch_no": cint(base_row.get("Maneja lotes")), "shelf_life_in_days": cint(base_row.get("Vida útil días")), "disabled": 0, "bimap_alphaerp_base_item": base, "bimap_alphaerp_variant_code": variant, "bimap_alphaerp_attributes": json.dumps(attrs, ensure_ascii=False), "bimap_alphaerp_tax_config": self._tax_json(base_row), "bimap_alphaerp_sat_product_code": _text(base_row.get("Clave producto SAT"))})
+			list_key = _text(row.get("Lista de atributos"))
+			attribute_name = self.maps["attributes"].get((list_key, "__name__"))
+			attribute_value = self.maps["attributes"].get((list_key, variant))
+			if not attribute_name:
+				self.stats["variant_missing_attribute_list"] += 1
+				continue
+			if not attribute_value:
+				# Preserve valid source variants even when ATRIBUTO lacks its row.
+				attribute_value = variant
+				attribute_doc = frappe.get_doc("Item Attribute", attribute_name)
+				if not any(d.attribute_value == attribute_value for d in attribute_doc.item_attribute_values):
+					attribute_doc.append("item_attribute_values", {"attribute_value": attribute_value, "abbr": variant[:30]})
+					self._save(attribute_doc, "item_attribute_missing_value", f"{list_key}:{variant}")
+				self.maps["attributes"][(list_key, variant)] = attribute_value
+			if frappe.db.exists("Item", code):
+				doc = frappe.get_doc("Item", code)
+			else:
+				from erpnext.controllers.item_variant import create_variant
+				doc = create_variant(base, {attribute_name: attribute_value})
+			doc.update({"item_code": code, "item_name": f"{_text(base_row.get('Nombre')) or base} - {attribute_value}", "disabled": 0, "bimap_alphaerp_base_item": base, "bimap_alphaerp_variant_code": variant, "bimap_alphaerp_attributes": json.dumps({attribute_name: attribute_value}, ensure_ascii=False), "bimap_alphaerp_tax_config": self._tax_json(base_row), "bimap_alphaerp_sat_product_code": _text(base_row.get("Clave producto SAT")), "bimap_alphaerp_item_kind": _text(base_row.get("Clase de artículo")) or "Producto", "bimap_product_type": _text(base_row.get("Tipo de producto AlphaERP")) or None})
 			barcode = _text(row.get("Código de barras"))
 			if barcode and not frappe.db.exists("Item Barcode", {"barcode": barcode}) and not any(child.barcode == barcode for child in doc.barcodes):
 				doc.append("barcodes", {"barcode": barcode, "uom": doc.stock_uom})
@@ -491,6 +619,15 @@ class AlphaERPCatalogExecutor:
 
 	def _import_prices(self, only_duplicate_keys=False):
 		rows = _rows(self.workbook, "Precios")
+		explicit_variants = {
+			(
+				row.get("Origen"),
+				_text(row.get("Clave cliente AlphaERP")) if row.get("Origen") == "Especial cliente" else _text(row.get("Lista de precios AlphaERP")),
+				_text(row.get("Clave producto AlphaERP")),
+				_text(row.get("Código variante AlphaERP")),
+			)
+			for row in rows if _text(row.get("Código variante AlphaERP"))
+		}
 		key_counts = Counter(_text(row.get("Identificador precio")) for row in rows)
 		key_seen = Counter()
 		for row in rows:
@@ -500,8 +637,18 @@ class AlphaERPCatalogExecutor:
 			key_seen[key] += 1
 			if key_seen[key] > 1:
 				key = f"{key}:QTY:{_text(row.get('Cantidad desde'))}:{_text(row.get('Cantidad hasta'))}"
-			item = self._target_item(_text(row.get("Clave producto AlphaERP")), _text(row.get("Código variante AlphaERP")))
-			if not item:
+			base = _text(row.get("Clave producto AlphaERP"))
+			variant = _text(row.get("Código variante AlphaERP"))
+			item = self._target_item(base, variant)
+			items = [(item, variant)] if item else []
+			if not variant and frappe.db.exists("Item", {"name": base, "has_variants": 1}):
+				scope = _text(row.get("Clave cliente AlphaERP")) if row.get("Origen") == "Especial cliente" else _text(row.get("Lista de precios AlphaERP"))
+				items = []
+				for variant_row in frappe.get_all("Item", filters={"variant_of": base}, fields=["name", "bimap_alphaerp_variant_code"]):
+					variant_code = _text(variant_row.bimap_alphaerp_variant_code)
+					if (row.get("Origen"), scope, base, variant_code) not in explicit_variants:
+						items.append((variant_row.name, variant_code))
+			if not items:
 				self.stats["price_orphan"] += 1
 				continue
 			customer = self.maps["customers"].get(_text(row.get("Clave cliente AlphaERP")))
@@ -514,11 +661,30 @@ class AlphaERPCatalogExecutor:
 			if not price_list or (row.get("Origen") == "Especial cliente" and not customer):
 				self.stats["price_orphan"] += 1
 				continue
-			name = frappe.db.get_value("Item Price", {"bimap_alphaerp_price_key": key}, "name")
-			doc = frappe.get_doc("Item Price", name) if name else frappe.new_doc("Item Price")
-			uom = frappe.get_cached_value("Item", item, "stock_uom")
-			doc.update({"item_code": item, "bimap_alphaerp_price_key": key, "price_list": price_list, "price_list_rate": flt(row.get("Precio")), "currency": currency, "uom": uom, "customer": customer, "min_qty": flt(row.get("Cantidad desde")), "valid_from": row.get("Fecha precio") or None})
-			self._save(doc, "price", key)
+			for item, target_variant in items:
+				target_key = f"{key}:VARIANT:{target_variant}" if not variant and target_variant else key
+				name = frappe.db.get_value("Item Price", {"bimap_alphaerp_price_key": target_key}, "name")
+				doc = frappe.get_doc("Item Price", name) if name else frappe.new_doc("Item Price")
+				uom = frappe.get_cached_value("Item", item, "stock_uom")
+				doc.update({"item_code": item, "bimap_alphaerp_price_key": target_key, "price_list": price_list, "price_list_rate": flt(row.get("Precio")), "currency": currency, "uom": uom, "customer": customer, "min_qty": flt(row.get("Cantidad desde")), "valid_from": row.get("Fecha precio") or None})
+				self._save(doc, "price", target_key)
+
+	def hydrate_maps_from_database(self):
+		"""Load identifiers needed to resume prices after an interrupted import."""
+		self.maps["items"] = {
+			row.bimap_alphaerp_base_item: row.name
+			for row in frappe.get_all("Item", filters={"bimap_alphaerp_variant_code": ""}, fields=["name", "bimap_alphaerp_base_item"])
+			if row.bimap_alphaerp_base_item
+		}
+		self.maps["variants"] = {
+			(row.bimap_alphaerp_base_item, row.bimap_alphaerp_variant_code): row.name
+			for row in frappe.get_all("Item", filters={"bimap_alphaerp_variant_code": ["!=", ""]}, fields=["name", "bimap_alphaerp_base_item", "bimap_alphaerp_variant_code"])
+		}
+		self.maps["customers"] = dict(frappe.get_all("Customer", fields=["bimap_customer_number", "name"], as_list=True))
+		self.maps["price_lists"] = dict(frappe.get_all("Price List", filters={"bimap_alphaerp_price_list": ["!=", ""]}, fields=["bimap_alphaerp_price_list", "name"], as_list=True))
+		for row in _rows(self.workbook, "Monedas"):
+			if row.get("Moneda ISO"):
+				self.maps["currencies"][_text(row.get("Moneda AlphaERP"))] = _text(row.get("Moneda ISO"))
 
 
 def execute_catalog_migration(source_directory=None, company=None, commit=True):
