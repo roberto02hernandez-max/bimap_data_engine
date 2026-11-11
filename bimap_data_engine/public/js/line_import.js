@@ -1,6 +1,27 @@
 window.BimapDataEngineLineImport = {
-	async call(method, args, type = "POST") {
-		const response = await frappe.call({ method, args, type });
+	messageFromError(error, fallback = __("No se pudieron preparar las partidas.")) {
+		const response = error?.responseJSON || error || {};
+		let messages = response._server_messages;
+		if (typeof messages === "string") {
+			try { messages = JSON.parse(messages); } catch (_ignored) { messages = []; }
+		}
+		for (let entry of Array.isArray(messages) ? messages : []) {
+			if (typeof entry === "string") {
+				try { entry = JSON.parse(entry); } catch (_ignored) { entry = { message: entry }; }
+			}
+			if (entry?.message) return String(entry.message).replace(/<[^>]*>/g, "").trim();
+		}
+		const message = response._error_message || error?.message || response.message;
+		return message && message !== "[object Object]" ? String(message).replace(/<[^>]*>/g, "").trim() : fallback;
+	},
+
+	async call(method, args, type = "POST", inlineErrors = false) {
+		const errorTypes = ["ValidationError", "PermissionError", "MandatoryError", "LinkValidationError",
+			"DoesNotExistError", "InvalidQtyError", "DataValidationError"];
+		const response = await frappe.call({ method, args, type,
+			...(inlineErrors ? { headers: { "X-BIMAP-Document-Errors": "inline" },
+				error_handlers: Object.fromEntries(errorTypes.map((name) => [name, () => {}])) } : {}),
+		});
 		return response.message;
 	},
 
@@ -60,6 +81,16 @@ window.BimapDataEngineLineImport = {
 		let workbook = null;
 		let adapter = null;
 		let suggestions = [];
+		let uploadedFile = null;
+		let cleanupPromise = null;
+		const configuredFields = Array.isArray(options.fields) ? options.fields : [];
+		const mappingFields = (configuredFields.length
+			? configuredFields.map((configured) => {
+				const fieldname = typeof configured === "string" ? configured : configured.fieldname;
+				const field = table.fields.find((candidate) => candidate.fieldname === fieldname && !candidate.read_only);
+				return field ? { ...field, label: typeof configured === "string" ? field.label : (configured.label || field.label) } : null;
+			}).filter(Boolean)
+			: table.fields.filter((candidate) => !candidate.read_only));
 		const setStatus = (message, state = "") => {
 			elements.status.textContent = message;
 			elements.status.dataset.state = state;
@@ -85,14 +116,14 @@ window.BimapDataEngineLineImport = {
 				select.append(Object.assign(document.createElement("option"), {
 					value: "", textContent: __("No importar"),
 				}));
-				for (const field of table.fields.filter((candidate) => !candidate.read_only)) {
+				for (const field of mappingFields) {
 					select.append(Object.assign(document.createElement("option"), {
 						value: field.fieldname,
-						textContent: `${field.label} (${field.fieldname})`,
+						textContent: field.label,
 					}));
 				}
 				const suggested = suggestions.find((candidate) => candidate.source === header);
-				if (suggested) select.value = suggested.target;
+				if (suggested && mappingFields.some((field) => field.fieldname === suggested.target)) select.value = suggested.target;
 				row.append(caption, select);
 				return row;
 			}));
@@ -121,7 +152,20 @@ window.BimapDataEngineLineImport = {
 			setStatus(__("{0} filas listas para revisar y mapear.", [sheet.row_count]), "success");
 		};
 
+		const cleanupFile = async () => {
+			if (!uploadedFile?.name && !uploadedFile?.file_url) return false;
+			if (cleanupPromise) return cleanupPromise;
+			const file = uploadedFile;
+			uploadedFile = null;
+			cleanupPromise = this.call("bimap_data_engine.api.imports.delete_temporary_line_file",
+				{ file_name: file.name || "", file_url: file.file_url || "" }, "POST", true)
+				.then(() => true).catch(() => false).finally(() => { cleanupPromise = null; });
+			return cleanupPromise;
+		};
+
 		const loadFile = (fileDoc) => {
+			uploadedFile = fileDoc;
+			root.dataset.temporaryFile = fileDoc?.name || fileDoc?.file_url || "unknown";
 			setStatus(__("Leyendo archivo…"));
 			return this.call("bimap_data_engine.api.imports.inspect_file", { file_url: fileDoc.file_url })
 				.then(async (result) => {
@@ -137,10 +181,14 @@ window.BimapDataEngineLineImport = {
 		elements.file.addEventListener("click", () => {
 			new frappe.ui.FileUploader({
 				folder: "Home/Attachments",
-				allow_toggle_private: true,
+				allow_toggle_private: false,
+				make_attachments_public: false,
 				allow_take_photo: false,
 				restrictions: { allowed_file_types: [".csv", ".xlsx"] },
-				on_success: (fileDoc) => loadFile(fileDoc).catch((error) => setStatus(error.message, "error")),
+				on_success: async (fileDoc) => {
+					await cleanupFile();
+					return loadFile(fileDoc).catch((error) => setStatus(this.messageFromError(error), "error"));
+				},
 			});
 		});
 		elements.sheet.addEventListener("change", () => renderSheet().catch((error) => setStatus(error.message, "error")));
@@ -171,21 +219,37 @@ window.BimapDataEngineLineImport = {
 				const existingRows = Array.isArray(savePayload.items) ? savePayload.items : [];
 				const parentValues = { ...savePayload };
 				delete parentValues.items;
-				const prepared = await window.BimapDataEngineIntegration.prepareDocumentLines({
-					parentDoctype,
-					tableField,
-					parentValues,
-					existingRows,
-					importedRows: mapped.records.map((record) => record.values),
-					mergePolicy: elements.policy.value,
-					matchFields: options.matchFields || ["item_code", "uom", "warehouse"]
-						.filter((field) => availableChildFields.has(field)),
-				});
+				let prepared;
+				try {
+					prepared = await this.call("bimap_data_engine.api.integration.prepare_document_lines", {
+						parent_doctype: parentDoctype, table_field: tableField, parent_values: parentValues,
+						existing_rows: existingRows, imported_rows: mapped.records.map((record) => record.values),
+						merge_policy: elements.policy.value,
+						match_fields: options.matchFields || ["item_code", "uom", "warehouse"]
+							.filter((field) => availableChildFields.has(field)),
+					}, "POST", true);
+					if (prepared?.valid === false) throw new Error(prepared.error || __("Revisa las partidas marcadas."));
+				} catch (error) {
+					const message = this.messageFromError(error);
+					const targets = currentMapping();
+					const targetField = targets.find((entry) => message.toLocaleLowerCase().includes(entry.target.toLocaleLowerCase()))?.target
+						|| (/cantidad|qty|mayor a cero/i.test(message) ? "qty" : /producto|item/i.test(message) ? "item_code" : null);
+					const matchingRecord = mapped.records.find((record) => Object.values(record.values || {})
+						.some((value) => value && message.includes(String(value)))) || mapped.records[0];
+					const sourceField = targets.find((entry) => entry.target === targetField)?.source || null;
+					const fieldLabel = mappingFields.find((field) => field.fieldname === targetField)?.label || sourceField;
+					const issue = { sheet: sheet.name, row: matchingRecord?.source_row || 2,
+						source_field: sourceField, target_field: targetField, severity: "error", message, error: message };
+					adapter.showIssues([issue], { sheetName: sheet.name, onlyIssues: true });
+					setStatus(__("Fila {0}{1}: {2}", [issue.row, fieldLabel ? ` · ${fieldLabel}` : "", message]), "error");
+					return;
+				}
 				if (typeof screen.applyPreparedLines === "function") {
 					await screen.applyPreparedLines(prepared);
 				} else {
 					window.BimapDataEngineIntegration.applyPreparedLinesToScreen(screen, prepared);
 				}
+				await cleanupFile();
 				dialog.hide();
 				(screen.showLineImportNotice || screen.mostrarAviso)?.call(
 					screen,
@@ -193,11 +257,13 @@ window.BimapDataEngineLineImport = {
 					"green",
 				);
 			} catch (error) {
-				setStatus(error.message || __("No se pudieron preparar las partidas."), "error");
+				setStatus(this.messageFromError(error), "error");
 			} finally {
 				elements.apply.disabled = !workbook;
 			}
 		});
+		dialog.onhide = () => { void cleanupFile(); };
+		dialog.$wrapper.find(".btn-modal-close").on("click.bimap-line-import-cleanup", () => { void cleanupFile(); });
 		dialog.$wrapper.on("hidden.bs.modal", () => adapter?.destroy?.());
 		dialog.show();
 		return dialog;

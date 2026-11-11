@@ -26,15 +26,23 @@ def prepare_document_lines(
 	merge_policy="append",
 	match_fields=None,
 ):
-	return prepare_line_import(
-		parent_doctype,
-		table_field,
-		parent_values,
-		existing_rows,
-		imported_rows,
-		merge_policy=merge_policy,
-		match_fields=match_fields,
-	)
+	try:
+		result = prepare_line_import(
+			parent_doctype,
+			table_field,
+			parent_values,
+			existing_rows,
+			imported_rows,
+			merge_policy=merge_policy,
+			match_fields=match_fields,
+		)
+		return {"valid": True, **result}
+	except (frappe.ValidationError, frappe.DoesNotExistError, frappe.MandatoryError, frappe.LinkValidationError) as exc:
+		# Row validation is part of the importer's normal review cycle. Returning
+		# it as data prevents Frappe's global 404/417 modal from obscuring the
+		# row/cell issue rendered by the embedded spreadsheet.
+		frappe.clear_messages()
+		return {"valid": False, "error": str(exc)}
 
 
 @frappe.whitelist(methods=["POST"])

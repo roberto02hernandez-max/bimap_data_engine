@@ -5,6 +5,7 @@ import frappe
 from frappe.tests.utils import FrappeTestCase
 from frappe.utils import add_days, today
 
+from bimap_data_engine.api.integration import prepare_document_lines
 from bimap_data_engine.services.import_engine import build_import_plan, create_import_job
 from bimap_data_engine.services.jobs import run_job
 from bimap_data_engine.services.line_import import map_imported_rows, prepare_line_import
@@ -337,3 +338,16 @@ class TestTransactionImports(FrappeTestCase):
 		self.assertTrue(result["valid"], result)
 		self.assertEqual(result["records"][0]["values"]["item_code"], self.item_code)
 		self.assertEqual(result["records"][0]["values"]["qty"], 5.0)
+
+	def test_embedded_line_validation_is_returned_inline(self):
+		parent = {
+			"customer": self.customer, "company": self.company,
+			"transaction_date": str(today()), "delivery_date": str(add_days(today(), 2)),
+		}
+		for row in (
+			{"item_code": self.item_code, "qty": 0, "uom": self.stock_uom},
+			{"item_code": "BDE-ITEM-INEXISTENTE", "qty": 1, "uom": self.stock_uom},
+		):
+			result = prepare_document_lines("Sales Order", "items", parent, [], [row])
+			self.assertFalse(result["valid"], result)
+			self.assertIn(row["item_code"].lower(), result["error"].lower())

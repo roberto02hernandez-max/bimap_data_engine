@@ -1,7 +1,7 @@
 """File inspection, mappings and persistent session endpoints."""
 
 import frappe
-from frappe.utils import cint
+from frappe.utils import cint, cstr
 
 from bimap_data_engine.services.files import parse_attached_file
 from bimap_data_engine.services.import_engine import (
@@ -24,6 +24,26 @@ from bimap_data_engine.services.sessions import (
 @frappe.whitelist(methods=["POST"])
 def inspect_file(file_url):
 	return parse_attached_file(file_url)
+
+
+@frappe.whitelist(methods=["POST"])
+def delete_temporary_line_file(file_name=None, file_url=None):
+	"""Delete only the caller's unattached CSV/XLSX used by the embedded line importer."""
+	name = cstr(file_name).strip() or frappe.db.get_value("File", {"file_url": cstr(file_url).strip()}, "name")
+	if not name:
+		frappe.throw("El archivo temporal ya no existe.")
+	file_doc = frappe.get_doc("File", name)
+	file_doc.check_permission("delete")
+	if file_doc.owner != frappe.session.user:
+		frappe.throw("El archivo temporal pertenece a otro usuario.", frappe.PermissionError)
+	if file_doc.attached_to_doctype or file_doc.attached_to_name:
+		frappe.throw("El archivo ya está adjunto a un documento y no puede eliminarse como temporal.")
+	if file_doc.folder != "Home/Attachments":
+		frappe.throw("El archivo no pertenece al área temporal del importador.")
+	if not cstr(file_doc.file_name).lower().endswith((".csv", ".xlsx")):
+		frappe.throw("El archivo no corresponde a una importación de partidas.")
+	file_doc.delete()
+	return {"deleted": True, "name": file_doc.name}
 
 
 @frappe.whitelist(methods=["POST"])
